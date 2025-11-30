@@ -2,9 +2,9 @@
 #include "hardware/i2c.h"
 #include <stdio.h>
 
-#define I2C_PORT       i2c0
-#define I2C_SDA_PIN    4      // change if you wired differently
-#define I2C_SCL_PIN    5
+#define I2C_PORT       i2c1
+#define I2C_SDA_PIN    10    
+#define I2C_SCL_PIN    11
 #define MAX1704X_ADDR  0x36 // Equal to 54 in base 10
 
 // Page 7 (Registers)
@@ -18,7 +18,7 @@
 
 // TODO: FINISH THIS
 #define QUICKSTART_VALUE 0x4000
-#define POWERONRST_VALUE 0x0054
+#define POWERONRST_VALUE 0x5400
 
 int i2c_read16(uint8_t reg_msb, uint16_t *out) {
     uint8_t reg = reg_msb; // copy so we dont overwrite argument
@@ -44,14 +44,32 @@ int i2c_write16(uint8_t reg_msb, uint16_t val) {
 }
 
 float read_voltage() {
-    // TODO
+    uint16_t raw_vcell = 0;
+    if (i2c_read16(REG_VCELL_MSB, &raw_vcell) != 0) {
+        return -1.0f;
+    }
+    // Bits 15:4 hold the measurement; each LSB = 1.25mV.
+    raw_vcell >>= 4;
+    return raw_vcell * 0.00125f;
 }
 
 float read_soc() {
-    // TODO
-    // Read state of charge
+    uint16_t raw_soc = 0;
+    if (i2c_read16(REG_SOC_MSB, &raw_soc) != 0) {
+        return -1.0f;
+    }
+    // 8.8 fixed-point format, so divide by 256 to get percentage.
+    return raw_soc / 256.0f;
 }
 
+int quickstart() {
+    // Restarts fuel-gauge calculations (datasheet quick-start command).
+    return i2c_write16(REG_MODE_MSB, QUICKSTART_VALUE);
+}
 
+int power_on_reset() {
+    // Soft reset back to POR defaults.
+    return i2c_write16(REG_COMMAND_MSB, POWERONRST_VALUE);
+}
 
 // no main()
