@@ -21,13 +21,13 @@
 //
 
 #define IMU_SPI_PORT   spi0
-#define IMU_PIN_SCK    18
-#define IMU_PIN_MOSI   19
-#define IMU_PIN_MISO   16
-#define IMU_PIN_CS     17
+#define IMU_PIN_MISO   16   // SPI0 RX
+#define IMU_PIN_CS     17   // SPI0 CSn
+#define IMU_PIN_SCK    18   // SPI0 SCK
+#define IMU_PIN_MOSI   19   // SPI0 TX
 
 // LSM6DS3TR-C SPI mode:
-#define IMU_SPI_BAUD   (10 * 1000 * 1000)  // 10 MHz
+#define IMU_SPI_BAUD   (1 * 1000 * 1000) // 1 MHz
 
 // ==============================
 //  LSM6DS3TR-C register map
@@ -55,7 +55,7 @@
 #define LSM6DS3_REG_OUTZ_L_XL        0x2C
 #define LSM6DS3_REG_OUTZ_H_XL        0x2D
 
-#define LSM6DS3_WHO_AM_I_VALUE       0x69
+#define LSM6DS3_WHO_AM_I_VALUE       0x6A
 
 // ==============================
 //  Step detection / history config
@@ -138,7 +138,7 @@ static void imu_write_reg(uint8_t reg, uint8_t value)
 {
     uint8_t tx[2];
     // For a write, MSB=0. Auto-increment is not needed for a single register.
-    tx[0] = reg & 0x3F;  // clear R/W and auto-inc bits just in case
+    tx[0] = reg & 0x7F;  // clear R/W and auto-inc bits just in case
     tx[1] = value;
 
     imu_select();
@@ -255,7 +255,7 @@ bool imu_init(void)
     // Basic control register setup
     // CTRL3_C: enable auto-increment (IF_INC) and block data update (BDU)
     // Bit2 = IF_INC, Bit3 = BDU
-    uint8_t ctrl3_c = (1u << 2) | (1u << 3);
+    uint8_t ctrl3_c = (1u << 6) | (1u << 2);   // = 0x44
     imu_write_reg(LSM6DS3_REG_CTRL3_C, ctrl3_c);
 
     // CTRL1_XL: accelerometer configuration

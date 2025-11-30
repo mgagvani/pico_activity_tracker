@@ -4,6 +4,26 @@
 #include <string.h>
 #include "pico/stdlib.h"
 
-int main() {
-    printf("hello 362 project");
+#include "pico/stdlib.h"
+#include "imu.h"
+#include <stdio.h>
+
+int main(void) {
+    stdio_init_all();
+    sleep_ms(1000); 
+
+    bool ok = imu_init();
+    printf("imu_init() = %d\n", ok);
+
+    while (1) {
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        imu_update(now);
+
+        int16_t ax, ay, az;
+        imu_get_accel_raw(&ax, &ay, &az);
+        printf("raw: %6d %6d %6d  steps=%lu\r\n",
+               ax, ay, az, (unsigned long)imu_get_total_steps());
+
+        sleep_ms(100); // 10Hz 
+    }
 }
