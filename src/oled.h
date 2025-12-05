@@ -12,9 +12,9 @@
 // using the SSD1306 controller over I2C.
 //
 
-// Display dimensions (change to 32 if using 128x32 display)
+// Display dimensions
 #define OLED_WIDTH   128
-#define OLED_HEIGHT  64
+#define OLED_HEIGHT  32
 
 // Initialize the OLED display
 // Returns true on success, false on failure
@@ -58,6 +58,47 @@ void oled_invert(bool invert);
 
 // Set display contrast (0-255)
 void oled_set_contrast(uint8_t contrast);
+
+// Draw battery icon with 5 states (0%, 25%, 50%, 75%, 100%)
+// x, y: top-left corner position
+// percent: battery level 0-100
+void oled_draw_battery(int16_t x, int16_t y, uint8_t percent);
+
+// Write text at 2x scale for large numbers
+void oled_print_2x(uint8_t x, uint8_t y, const char *str);
+
+// Draw a rectangle outline
+void oled_draw_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t color);
+
+// ==============================
+//  Easy-to-use convenience functions
+// ==============================
+
+// Print at current cursor position (no coordinates needed)
+// Cursor auto-advances after each character
+void oled_puts(const char *str);
+
+// Print and move cursor to next line
+void oled_println(const char *str);
+
+// Printf-style formatted print at current cursor
+// Example: oled_printf("Steps: %d", steps);
+void oled_printf(const char *fmt, ...);
+
+// Show battery icon in top-right corner (default position)
+// Just pass the percentage, no coordinates needed
+void oled_show_battery(uint8_t percent);
+
+// Show step count centered on display (large 2x text)
+// Automatically centers the number horizontally
+void oled_show_steps(uint32_t steps);
+
+// Clear screen and reset cursor to top-left
+void oled_home(void);
+
+// Move cursor to specific line (0-3 for 32px display)
+// Each line is 8 pixels tall
+void oled_goto_line(uint8_t line);
 
 #endif // OLED_H
 

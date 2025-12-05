@@ -31,31 +31,29 @@ int main() {
         printf("OLED init failed!\n");
     }
 
-    // Display test text on OLED
-    oled_print(0, 0, "Hello World!");
-    oled_print(0, 10, "Pico Activity");
-    oled_print(0, 20, "Tracker v1.0");
-    oled_print(0, 40, "ECE 362 Project");
-    oled_display();
-
     // (void)quickstart();
 
+    uint32_t steps = 0;  // TODO: get actual steps from IMU
+
     while (true) {
-        float vbat = read_voltage();
         float soc = read_soc();
+        uint8_t battery_percent = (soc < 0) ? 0 : (soc > 100) ? 100 : (uint8_t)soc;
 
-        printf("VBAT: %.3f V | SOC: %.2f %%\n", vbat, soc);
+        printf("Steps: %lu | SOC: %.1f%%\n", steps, soc);
 
-        // Update OLED with battery info
-        char buf[32];
-        
-        // Clear the bottom portion for updating values
-        oled_fill_rect(0, 52, OLED_WIDTH, 12, 0);
-        
-        snprintf(buf, sizeof(buf), "BAT: %.2fV  %.0f%%", vbat, soc);
-        oled_print(0, 52, buf);
+        // Clear and reset cursor
+        oled_home();
+
+        // Draw UI using convenience functions
+        oled_print(4, 2, "STEPS");     // Label top-left
+        oled_show_battery(battery_percent);  // Battery icon top-right (auto-positioned)
+        oled_show_steps(steps);              // Large centered step count (auto-centered)
+
         oled_display();
 
-        sleep_ms(1000);
+        // Simulate step counting (remove this when using real IMU)
+        steps += 1;
+
+        sleep_ms(500);
     }
 }
