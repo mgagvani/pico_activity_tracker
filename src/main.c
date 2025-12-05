@@ -4,6 +4,7 @@
 #include <string.h>
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
+#include "oled.h"
 
 // functions
 float read_voltage(void);
@@ -18,11 +19,6 @@ int quickstart(void);
 int main() {
     stdio_init_all();
 
-    // debug
-    // while (true) {
-    //     printf("Hello World!\n");
-    // }
-
     // setup I2C 
     i2c_init(I2C_PORT, 400 * 1000); // 400 kHz
     gpio_set_function(I2C_SDA_PIN, GPIO_FUNC_I2C);
@@ -30,13 +26,34 @@ int main() {
     gpio_pull_up(I2C_SDA_PIN);
     gpio_pull_up(I2C_SCL_PIN);
 
+    // Initialize OLED display
+    if (!oled_init()) {
+        printf("OLED init failed!\n");
+    }
+
     // (void)quickstart();
 
-    while (true) {
-        float vbat = read_voltage();
-        float soc = read_soc();
+    uint32_t steps = 0;  // TODO: get actual steps from IMU
 
-        printf("VBAT: %.3f V | SOC: %.2f %%\n", vbat, soc);
-        sleep_ms(100);
+    while (true) {
+        float soc = read_soc();
+        uint8_t battery_percent = (soc < 0) ? 0 : (soc > 100) ? 100 : (uint8_t)soc;
+
+        printf("Steps: %lu | SOC: %.1f%%\n", steps, soc);
+
+        // Clear and reset cursor
+        oled_home();
+
+        // Draw UI using convenience functions
+        oled_print(4, 2, "STEPS");     // Label top-left
+        oled_show_battery(battery_percent);  // Battery icon top-right (auto-positioned)
+        oled_show_steps(steps);              // Large centered step count (auto-centered)
+
+        oled_display();
+
+        // Simulate step counting (remove this when using real IMU)
+        steps += 1;
+
+        sleep_ms(500);
     }
 }
