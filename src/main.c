@@ -22,7 +22,7 @@
 #define NUM_LEDS        4
 #define IS_RGBW         false
 #define LED_FREQ_HZ     800000
-#define STEPS_PER_LED   250
+#define STEPS_PER_LED   25
 
 // Update cadences (ms)
 #define IMU_SAMPLE_MS       20   // ~50 Hz for step detection

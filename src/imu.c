@@ -1,33 +1,22 @@
 #include "imu.h"
 
 #include "pico/stdlib.h"
-#include "hardware/spi.h"
+#include "hardware/i2c.h"
 #include <math.h>
 #include <string.h>
+#include <stdio.h>
 
 // ==============================
-//  Hardware / wiring config
+//  Hardware / wiring config (I2C)
 // ==============================
 //
-// This code assumes the IMU is connected via SPI.
+// Uses the same I2C bus as the OLED/MAX17048 (i2c1 on GPIO10/11).
 //
-// The pin assignments below are just placeholders.
-//
-// Typical SPI0 mapping on the Pico (just an example):
-//   SCK  = GPIO18
-//   MOSI = GPIO19
-//   MISO = GPIO16
-//   CS   = GPIO17
-//
-
-#define IMU_SPI_PORT   spi0
-#define IMU_PIN_MISO   16   // SPI0 RX
-#define IMU_PIN_CS     17   // SPI0 CSn
-#define IMU_PIN_SCK    18   // SPI0 SCK
-#define IMU_PIN_MOSI   19   // SPI0 TX
-
-// LSM6DS3TR-C SPI mode:
-#define IMU_SPI_BAUD   (1 * 400 * 1000) // 1 MHz
+#define IMU_I2C_PORT           i2c1
+#define IMU_PIN_SDA            10
+#define IMU_PIN_SCL            11
+#define LSM6DS3_ADDR_SA0_LOW   0x6A  // 7-bit I2C address when SDO/SA0 pulled low
+#define LSM6DS3_ADDR_SA0_HIGH  0x6B  // 7-bit I2C address when SDO/SA0 pulled high
 
 // ==============================
 //  LSM6DS3TR-C register map
@@ -61,12 +50,9 @@
 //  Step detection / history config
 // ==============================
 //
-// Assumption: imu_update() is called at a fairly fixed rate
-//             (something like 50–100 Hz works fine).
-// The numbers below are just first guesses; they really should be tuned
-// with actual motion data from your setup.
+// Assumption: imu_update() is called at a fairly fixed rate (~50-100 Hz).
 
-#define IMU_ACCEL_LSB_2G             (0.000061f)  // ≈0.061 mg/LSB → 0.000061 g/LSB
+#define IMU_ACCEL_LSB_2G             (0.000061f)  // 0.061 mg/LSB = 0.000061 g/LSB
 #define IMU_STEP_THRESHOLD_G         0.35f        // high-pass magnitude threshold in g
 #define IMU_STEP_MIN_INTERVAL_MS     350          // ignore steps closer than this in time
 #define IMU_HISTORY_MINUTES          60
@@ -79,6 +65,7 @@
 //  Internal state
 // ==============================
 
+static uint8_t s_i2c_addr            = LSM6DS3_ADDR_SA0_LOW;
 static bool     s_initialized          = false;
 
 // Last raw accelerometer reading (LSB)
@@ -107,68 +94,43 @@ static uint32_t s_curr_bucket_start_ms = 0;
 static uint32_t s_steps_last_hour_sum  = 0;
 
 // ==============================
-//  SPI helpers
+//  I2C helpers
 // ==============================
 
-static void imu_spi_init_pins(void)
+static void imu_i2c_init_pins(void)
 {
-    // Hook the pins up to the SPI peripheral
-    gpio_set_function(IMU_PIN_SCK,  GPIO_FUNC_SPI);
-    gpio_set_function(IMU_PIN_MOSI, GPIO_FUNC_SPI);
-    gpio_set_function(IMU_PIN_MISO, GPIO_FUNC_SPI);
-
-    // CS is a regular GPIO, active low
-    gpio_init(IMU_PIN_CS);
-    gpio_set_dir(IMU_PIN_CS, GPIO_OUT);
-    gpio_put(IMU_PIN_CS, 1);
+    static bool init_done = false;
+    if (init_done) return;
+    i2c_init(IMU_I2C_PORT, 400 * 1000); // 400 kHz
+    gpio_set_function(IMU_PIN_SDA, GPIO_FUNC_I2C);
+    gpio_set_function(IMU_PIN_SCL, GPIO_FUNC_I2C);
+    gpio_pull_up(IMU_PIN_SDA);
+    gpio_pull_up(IMU_PIN_SCL);
+    init_done = true;
 }
 
-static inline void imu_select(void)
-{
-    gpio_put(IMU_PIN_CS, 0);
-}
-
-static inline void imu_deselect(void)
-{
-    gpio_put(IMU_PIN_CS, 1);
-}
-
-// Write a single register over SPI
+// Write a single register over I2C
 static void imu_write_reg(uint8_t reg, uint8_t value)
 {
-    uint8_t tx[2];
-    // For a write, MSB=0. Auto-increment is not needed for a single register.
-    tx[0] = reg & 0x7F;  // clear R/W and auto-inc bits just in case
-    tx[1] = value;
-
-    imu_select();
-    spi_write_blocking(IMU_SPI_PORT, tx, 2);
-    imu_deselect();
+    uint8_t tx[2] = {reg, value};
+    i2c_write_blocking(IMU_I2C_PORT, s_i2c_addr, tx, 2, false);
 }
 
-// Read a single register over SPI
+// Read a single register over I2C
 static uint8_t imu_read_reg(uint8_t reg)
 {
-    uint8_t tx = reg | 0x80; // MSB=1 → read, auto-inc off
     uint8_t rx = 0;
-
-    imu_select();
-    spi_write_blocking(IMU_SPI_PORT, &tx, 1);
-    spi_read_blocking(IMU_SPI_PORT, 0xFF, &rx, 1);
-    imu_deselect();
-
+    i2c_write_blocking(IMU_I2C_PORT, s_i2c_addr, &reg, 1, true);
+    i2c_read_blocking(IMU_I2C_PORT, s_i2c_addr, &rx, 1, false);
     return rx;
 }
 
 // Read multiple consecutive registers (auto-increment)
 static void imu_read_regs(uint8_t start_reg, uint8_t *buf, size_t len)
 {
-    uint8_t tx = start_reg | 0xC0; // MSB=1 (read), bit6=1 (auto-increment)
-
-    imu_select();
-    spi_write_blocking(IMU_SPI_PORT, &tx, 1);
-    spi_read_blocking(IMU_SPI_PORT, 0xFF, buf, len);
-    imu_deselect();
+    uint8_t reg = start_reg;
+    i2c_write_blocking(IMU_I2C_PORT, s_i2c_addr, &reg, 1, true);
+    i2c_read_blocking(IMU_I2C_PORT, s_i2c_addr, buf, len, false);
 }
 
 // Grab a 3-axis accelerometer sample (raw LSB units)
@@ -224,32 +186,23 @@ static void imu_history_advance_buckets(uint32_t now_ms)
 
 bool imu_init(void)
 {
-    // One-time SPI peripheral setup
-    static bool spi_initialized = false;
-    if (!spi_initialized) {
-        imu_spi_init_pins();
-        spi_init(IMU_SPI_PORT, IMU_SPI_BAUD);
-
-        // 8 bits per frame, SPI mode 3, MSB first
-        spi_set_format(IMU_SPI_PORT,
-                       8,
-                       SPI_CPOL_1,
-                       SPI_CPHA_1,
-                       SPI_MSB_FIRST);
-
-        spi_initialized = true;
-    }
+    imu_i2c_init_pins();
 
     // Give the sensor some time to power up
     sleep_ms(20);
 
+    // Try default address, then alternate if needed
+    s_i2c_addr = LSM6DS3_ADDR_SA0_LOW;
     // Confirm we're talking to the correct device
     uint8_t whoami = imu_read_reg(LSM6DS3_REG_WHO_AM_I);
-    printf("WHO_AM_I=0x%02X (expect 0x6A)\n", whoami);
-
     if (whoami != LSM6DS3_WHO_AM_I_VALUE) {
-        // Optional: printf for debugging if stdio is enabled
-        printf("IMU WHO_AM_I mismatch: 0x%02X (expected 0x%02X)\n", whoami, LSM6DS3_WHO_AM_I_VALUE);
+        s_i2c_addr = LSM6DS3_ADDR_SA0_HIGH;
+        whoami = imu_read_reg(LSM6DS3_REG_WHO_AM_I);
+    }
+
+    printf("IMU WHO_AM_I=0x%02X @0x%02X (expect 0x6A)\n", whoami, s_i2c_addr);
+    if (whoami != LSM6DS3_WHO_AM_I_VALUE) {
+        printf("IMU WHO_AM_I mismatch: 0x%02X (expected 0x6A)\n", whoami);
         s_initialized = false;
         return false;
     }
@@ -267,8 +220,6 @@ bool imu_init(void)
     // CTRL2_G: gyroscope configuration
     // ODR_G = 104 Hz, FS_G = ±245 dps
     imu_write_reg(LSM6DS3_REG_CTRL2_G, 0x40);
-
-    // CTRL8_XL etc. left at default for now (no extra filtering here)
 
     // Reset runtime state
     s_raw_ax = s_raw_ay = s_raw_az = 0;
