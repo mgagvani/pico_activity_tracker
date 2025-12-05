@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
@@ -27,6 +28,7 @@
 #define IMU_SAMPLE_MS       20   // ~50 Hz for step detection
 #define DISPLAY_REFRESH_MS  250
 #define BATTERY_SAMPLE_MS   1000
+#define DIAG_INTERVAL_MS    500  // Serial diagnostics cadence
 
 // Fuel-gauge API (implemented in max17048.c)
 float read_voltage(void);
@@ -119,6 +121,8 @@ int main(void) {
     uint32_t last_imu_ms = 0;
     uint32_t last_display_ms = 0;
     uint32_t last_battery_ms = 0;
+    uint32_t last_diag_ms = 0;
+    uint32_t prev_steps = 0;
 
     while (true) {
         uint32_t now_ms = to_ms_since_boot(get_absolute_time());
@@ -140,6 +144,30 @@ int main(void) {
         }
 
         uint32_t steps = imu_ok ? imu_get_total_steps() : 0;
+
+        if (steps != prev_steps) {
+            printf("STEP %lu @ %lums\n", steps, now_ms);
+            prev_steps = steps;
+        }
+
+        if ((now_ms - last_diag_ms) >= DIAG_INTERVAL_MS) {
+            last_diag_ms = now_ms;
+            int16_t ax = 0, ay = 0, az = 0;
+            float fax = 0.0f, fay = 0.0f, faz = 0.0f;
+            float mag = 0.0f;
+
+            if (imu_ok) {
+                imu_get_accel_raw(&ax, &ay, &az);
+                imu_get_accel_filtered(&fax, &fay, &faz);
+                mag = sqrtf(fax * fax + fay * fay + faz * faz);
+                printf("diag t=%lums raw=(%6d,%6d,%6d) g=(%.3f,%.3f,%.3f) |g|=%.3f steps=%lu batt=%u%%\n",
+                       now_ms, ax, ay, az, fax, fay, faz, mag, steps, battery_percent);
+            } else {
+                printf("diag t=%lums IMU not initialized, steps=%lu batt=%u%%\n",
+                       now_ms, steps, battery_percent);
+            }
+        }
+
         update_led_bar(steps, battery_percent);
 
         if ((now_ms - last_display_ms) >= DISPLAY_REFRESH_MS) {

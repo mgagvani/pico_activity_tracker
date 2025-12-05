@@ -27,7 +27,7 @@
 #define IMU_PIN_MOSI   19   // SPI0 TX
 
 // LSM6DS3TR-C SPI mode:
-#define IMU_SPI_BAUD   (1 * 1000 * 1000) // 1 MHz
+#define IMU_SPI_BAUD   (1 * 400 * 1000) // 1 MHz
 
 // ==============================
 //  LSM6DS3TR-C register map
@@ -245,9 +245,11 @@ bool imu_init(void)
 
     // Confirm we're talking to the correct device
     uint8_t whoami = imu_read_reg(LSM6DS3_REG_WHO_AM_I);
+    printf("WHO_AM_I=0x%02X (expect 0x6A)\n", whoami);
+
     if (whoami != LSM6DS3_WHO_AM_I_VALUE) {
         // Optional: printf for debugging if stdio is enabled
-        // printf("IMU WHO_AM_I mismatch: 0x%02X (expected 0x%02X)\n", whoami, LSM6DS3_WHO_AM_I_VALUE);
+        printf("IMU WHO_AM_I mismatch: 0x%02X (expected 0x%02X)\n", whoami, LSM6DS3_WHO_AM_I_VALUE);
         s_initialized = false;
         return false;
     }
