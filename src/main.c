@@ -10,6 +10,7 @@
 
 #include "imu.h"
 #include "oled.h"
+#include "steps_to_calories.h"
 #include "ws2812.pio.h"
 
 // I2C is shared by the OLED and MAX17048 fuel gauge
@@ -23,6 +24,14 @@
 #define IS_RGBW         false
 #define LED_FREQ_HZ     800000
 #define STEPS_PER_LED   25
+
+// Button GPIOs on Proton board
+#define BUTTON_MODE_PIN  26  // Toggle display between steps and calories
+#define BUTTON_START_PIN 21  // Start/pause/continue workout
+
+// User configuration for calorie estimates
+#define USER_WEIGHT_LBS       160
+#define USER_HEIGHT_CATEGORY  HEIGHT_MEDIUM
 
 // Update cadences (ms)
 #define IMU_SAMPLE_MS       20   // ~50 Hz for step detection
@@ -82,11 +91,35 @@ static void update_led_bar(uint32_t steps, uint8_t battery_percent) {
     }
 }
 
-static void render_oled(uint32_t steps, uint8_t battery_percent) {
+static void buttons_init(void) {
+    gpio_init(BUTTON_MODE_PIN);
+    gpio_set_dir(BUTTON_MODE_PIN, GPIO_IN);
+    gpio_pull_up(BUTTON_MODE_PIN);   // Active-low button with pull-up
+
+    gpio_init(BUTTON_START_PIN);
+    gpio_set_dir(BUTTON_START_PIN, GPIO_IN);
+    gpio_pull_up(BUTTON_START_PIN);  // Active-low button with pull-up
+}
+
+static void render_oled(uint32_t steps, uint32_t calories, uint8_t battery_percent,
+                        bool show_calories, bool paused) {
     oled_home();
-    oled_print(4, 2, "STEPS");
-    oled_show_battery(battery_percent);
-    oled_show_steps(steps);
+
+    if (show_calories) {
+        oled_print(4, 2, "CAL");
+        oled_show_battery(battery_percent);
+        oled_show_calories(calories);
+    } else {
+        oled_print(4, 2, "STEPS");
+        oled_show_battery(battery_percent);
+        oled_show_steps(steps);
+    }
+
+    if (paused) {
+        // Show "PAUSED" near the bottom of the 32px display
+        oled_print(32, 24, "PAUSED");
+    }
+
     oled_display();
 }
 
@@ -95,6 +128,7 @@ int main(void) {
     sleep_ms(200); // give USB time to enumerate
 
     i2c_bus_init();
+    buttons_init();
 
     if (quickstart() != 0) {
         printf("MAX17048 quickstart failed\n");
@@ -124,6 +158,14 @@ int main(void) {
     uint32_t last_battery_ms = 0;
     uint32_t last_diag_ms = 0;
     uint32_t prev_steps = 0;
+    bool show_calories = false;
+    bool last_mode_level = true;       // pull-up, so idle = high
+    uint32_t last_mode_toggle_ms = 0;  // debounce timer
+    bool workout_running = false;
+    bool last_start_level = true;      // pull-up, so idle = high
+    uint32_t last_start_toggle_ms = 0; // debounce timer
+    uint32_t workout_steps = 0;
+    uint32_t workout_offset = 0;       // IMU total steps at workout (re)start
 
     while (true) {
         uint32_t now_ms = to_ms_since_boot(get_absolute_time());
@@ -144,11 +186,51 @@ int main(void) {
             }
         }
 
-        uint32_t steps = imu_ok ? imu_get_total_steps() : 0;
+        uint32_t total_steps = imu_ok ? imu_get_total_steps() : 0;
 
-        if (steps != prev_steps) {
-            printf("STEP %lu @ %lums\n", steps, now_ms);
-            prev_steps = steps;
+        // Handle mode button (GPIO 26): toggle between steps and calories
+        bool mode_level = gpio_get(BUTTON_MODE_PIN);  // 1 = released, 0 = pressed (active-low)
+        if (!mode_level && last_mode_level &&
+            (now_ms - last_mode_toggle_ms) > 200) {   // simple debounce
+            show_calories = !show_calories;
+            last_mode_toggle_ms = now_ms;
+            printf("Mode button pressed -> display %s\n",
+                   show_calories ? "CALORIES" : "STEPS");
+        }
+        last_mode_level = mode_level;
+
+        // Handle start/pause button (GPIO 21): control workout state
+        bool start_level = gpio_get(BUTTON_START_PIN); // 1 = released, 0 = pressed (active-low)
+        if (!start_level && last_start_level &&
+            (now_ms - last_start_toggle_ms) > 200) {   // simple debounce
+            workout_running = !workout_running;
+            last_start_toggle_ms = now_ms;
+
+            if (workout_running) {
+                // Starting or resuming: align offset so steps don't jump
+                workout_offset = total_steps - workout_steps;
+                printf("Workout %s\n", (workout_steps == 0) ? "START" : "RESUME");
+            } else {
+                printf("Workout PAUSE\n");
+            }
+        }
+        last_start_level = start_level;
+
+        // Update workout step count only while running
+        if (workout_running) {
+            if (total_steps >= workout_offset) {
+                workout_steps = total_steps - workout_offset;
+            } else {
+                workout_steps = 0;
+                workout_offset = total_steps;
+            }
+        }
+
+        uint32_t calories = steps_to_calories(workout_steps, USER_WEIGHT_LBS, USER_HEIGHT_CATEGORY);
+
+        if (workout_steps != prev_steps) {
+            printf("STEP %lu @ %lums\n", workout_steps, now_ms);
+            prev_steps = workout_steps;
         }
 
         if ((now_ms - last_diag_ms) >= DIAG_INTERVAL_MS) {
@@ -162,19 +244,21 @@ int main(void) {
                 imu_get_accel_filtered(&fax, &fay, &faz);
                 mag = sqrtf(fax * fax + fay * fay + faz * faz);
                 printf("diag t=%lums raw=(%6d,%6d,%6d) g=(%.3f,%.3f,%.3f) |g|=%.3f steps=%lu batt=%u%%\n",
-                       now_ms, ax, ay, az, fax, fay, faz, mag, steps, battery_percent);
+                       now_ms, ax, ay, az, fax, fay, faz, mag, workout_steps, battery_percent);
             } else {
                 printf("diag t=%lums IMU not initialized, steps=%lu batt=%u%%\n",
-                       now_ms, steps, battery_percent);
+                       now_ms, workout_steps, battery_percent);
             }
         }
 
-        update_led_bar(steps, battery_percent);
+        update_led_bar(workout_steps, battery_percent);
 
         if ((now_ms - last_display_ms) >= DISPLAY_REFRESH_MS) {
             last_display_ms = now_ms;
-            render_oled(steps, battery_percent);
-            printf("steps=%lu soc=%.1f%%\n", steps, soc);
+            bool paused = (!workout_running && (workout_steps > 0));
+            render_oled(workout_steps, calories, battery_percent, show_calories, paused);
+            printf("steps=%lu cal=%lu soc=%.1f%% %s\n",
+                   workout_steps, calories, soc, paused ? "[PAUSED]" : "");
         }
 
         sleep_ms(5);

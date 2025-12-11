@@ -93,6 +93,10 @@ void oled_show_battery(uint8_t percent);
 // Automatically centers the number horizontally
 void oled_show_steps(uint32_t steps);
 
+// Show calorie estimate centered on display (large 2x text)
+// Automatically centers the number horizontally
+void oled_show_calories(uint32_t calories);
+
 // Clear screen and reset cursor to top-left
 void oled_home(void);
 

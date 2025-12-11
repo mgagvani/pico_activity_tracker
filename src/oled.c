@@ -316,6 +316,21 @@ void oled_show_steps(uint32_t steps)
     oled_print_2x(x, 14, buf);
 }
 
+void oled_show_calories(uint32_t calories)
+{
+    // Format calorie count
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%lu", calories);
+
+    // Calculate width to center horizontally (2x scale: 12px per char)
+    uint8_t len = strlen(buf);
+    uint8_t text_width = len * 12 - 2;
+    uint8_t x = (OLED_WIDTH - text_width) / 2;
+
+    // Draw centered, vertically positioned for 32px display
+    oled_print_2x(x, 14, buf);
+}
+
 void oled_home(void)
 {
     memset(s_buffer, 0, BUFFER_SIZE);
