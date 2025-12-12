@@ -13,8 +13,8 @@
 // Uses the same I2C bus as the OLED/MAX17048 (i2c1 on GPIO10/11).
 //
 #define IMU_I2C_PORT           i2c1
-#define IMU_PIN_SDA            10
-#define IMU_PIN_SCL            11
+#define IMU_PIN_SDA            14
+#define IMU_PIN_SCL            15
 #define LSM6DS3_ADDR_SA0_LOW   0x6A  // 7-bit I2C address when SDO/SA0 pulled low
 #define LSM6DS3_ADDR_SA0_HIGH  0x6B  // 7-bit I2C address when SDO/SA0 pulled high
 

@@ -14,8 +14,8 @@
 #include <stdarg.h>
 
 #define OLED_I2C_PORT   i2c1
-#define OLED_I2C_SDA    10
-#define OLED_I2C_SCL    11
+#define OLED_I2C_SDA    14
+#define OLED_I2C_SCL    15
 #define SSD1306_ADDR    0x3C    // Common address; some displays use 0x3D
 
 #define SSD1306_CMD     0x00    // I2C control byte: next byte is a command

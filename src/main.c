@@ -15,8 +15,8 @@
 
 // I2C is shared by the OLED and MAX17048 fuel gauge
 #define I2C_PORT    i2c1
-#define I2C_SDA_PIN 10
-#define I2C_SCL_PIN 11
+#define I2C_SDA_PIN 14
+#define I2C_SCL_PIN 15
 
 // WS2812 configuration
 #define LED_PIN         8
@@ -159,13 +159,15 @@ int main(void) {
     uint32_t last_diag_ms = 0;
     uint32_t prev_steps = 0;
     bool show_calories = false;
-    bool last_mode_level = true;       // pull-up, so idle = high
+    // Seed last button states from actual GPIO levels so we don't auto-toggle on boot.
+    bool last_mode_level = gpio_get(BUTTON_MODE_PIN);
     uint32_t last_mode_toggle_ms = 0;  // debounce timer
-    bool workout_running = false;
-    bool last_start_level = true;      // pull-up, so idle = high
-    uint32_t last_start_toggle_ms = 0; // debounce timer
+    bool workout_running = true;       // start immediately
+    bool workout_started = true;
+    bool last_start_level = gpio_get(BUTTON_START_PIN);
+    uint32_t last_start_toggle_ms = 0; // unused while auto-run is enabled
     uint32_t workout_steps = 0;
-    uint32_t workout_offset = 0;       // IMU total steps at workout (re)start
+    uint32_t workout_offset = 0;       // start counting from boot
 
     while (true) {
         uint32_t now_ms = to_ms_since_boot(get_absolute_time());
@@ -199,31 +201,17 @@ int main(void) {
         }
         last_mode_level = mode_level;
 
-        // Handle start/pause button (GPIO 21): control workout state
-        bool start_level = gpio_get(BUTTON_START_PIN); // 1 = released, 0 = pressed (active-low)
-        if (!start_level && last_start_level &&
-            (now_ms - last_start_toggle_ms) > 200) {   // simple debounce
-            workout_running = !workout_running;
-            last_start_toggle_ms = now_ms;
+        // Auto-run: always count steps from boot; ignore start/pause button for now
+        (void)last_start_level;
+        (void)last_start_toggle_ms;
+        (void)workout_started;
+        (void)workout_running;
 
-            if (workout_running) {
-                // Starting or resuming: align offset so steps don't jump
-                workout_offset = total_steps - workout_steps;
-                printf("Workout %s\n", (workout_steps == 0) ? "START" : "RESUME");
-            } else {
-                printf("Workout PAUSE\n");
-            }
-        }
-        last_start_level = start_level;
-
-        // Update workout step count only while running
-        if (workout_running) {
-            if (total_steps >= workout_offset) {
-                workout_steps = total_steps - workout_offset;
-            } else {
-                workout_steps = 0;
-                workout_offset = total_steps;
-            }
+        if (total_steps >= workout_offset) {
+            workout_steps = total_steps - workout_offset;
+        } else {
+            workout_steps = 0;
+            workout_offset = total_steps;
         }
 
         uint32_t calories = steps_to_calories(workout_steps, USER_WEIGHT_LBS, USER_HEIGHT_CATEGORY);
@@ -255,7 +243,7 @@ int main(void) {
 
         if ((now_ms - last_display_ms) >= DISPLAY_REFRESH_MS) {
             last_display_ms = now_ms;
-            bool paused = (!workout_running && (workout_steps > 0));
+            bool paused = false; // always running in auto mode
             render_oled(workout_steps, calories, battery_percent, show_calories, paused);
             printf("steps=%lu cal=%lu soc=%.1f%% %s\n",
                    workout_steps, calories, soc, paused ? "[PAUSED]" : "");
