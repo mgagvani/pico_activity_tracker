@@ -44,6 +44,15 @@ void oled_write_string(const char *str);
 // Write a string at a specific position (convenience function)
 void oled_print(uint8_t x, uint8_t y, const char *str);
 
+// Slide text in from the right edge toward its final position (simple startup animation)
+// frame_delay_ms controls speed; y is the top pixel row to start drawing
+void oled_slide_in_text(const char *text, uint8_t y, uint8_t frame_delay_ms);
+
+// Variant with a per-frame hook (e.g., animate LEDs while sliding)
+// hook is called once per frame after the text is drawn, with the current x position
+void oled_slide_in_text_hook(const char *text, uint8_t y, uint8_t frame_delay_ms,
+                             void (*hook)(void *ctx, int16_t x), void *ctx);
+
 // Draw a filled rectangle
 void oled_fill_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t color);
 

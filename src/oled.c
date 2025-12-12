@@ -48,6 +48,42 @@ static uint8_t s_buffer[BUFFER_SIZE];
 static uint8_t s_cursor_x = 0;
 static uint8_t s_cursor_y = 0;
 
+// Return pixel width of a string using the 5x7 font with 1px spacing
+static uint16_t oled_text_width_px(const char *str)
+{
+    size_t len = strlen(str);
+    if (len == 0) return 0;
+    size_t width = len * (FONT_WIDTH + 1);
+    if (width > 0) width -= 1; // drop trailing spacing
+    return (uint16_t)width;
+}
+
+// Draw a single character at an explicit position without touching the global cursor
+static void oled_draw_char_at(int16_t x, int16_t y, char c)
+{
+    if (c < 32 || c > 126) c = ' ';
+    uint8_t idx = c - FONT_FIRST_CHAR;
+
+    for (uint8_t col = 0; col < FONT_WIDTH; col++) {
+        uint8_t line = font5x7[idx][col];
+        for (uint8_t row = 0; row < FONT_HEIGHT; row++) {
+            if (line & (1 << row)) {
+                oled_set_pixel(x + col, y + row, 1);
+            }
+        }
+    }
+}
+
+// Draw text on a single line without wrapping; pixels outside the display are clipped
+static void oled_draw_text_single_line(int16_t x, int16_t y, const char *text)
+{
+    int16_t cursor_x = x;
+    while (*text) {
+        oled_draw_char_at(cursor_x, y, *text++);
+        cursor_x += FONT_WIDTH + 1; // 1px spacing
+    }
+}
+
 static void oled_send_cmd(uint8_t cmd)
 {
     uint8_t buf[2] = {SSD1306_CMD, cmd};
@@ -175,6 +211,38 @@ void oled_print(uint8_t x, uint8_t y, const char *str)
 {
     oled_set_cursor(x, y);
     oled_write_string(str);
+}
+
+void oled_slide_in_text_hook(const char *text, uint8_t y, uint8_t frame_delay_ms,
+                             void (*hook)(void *ctx, int16_t x), void *ctx)
+{
+    if (!text) return;
+
+    uint16_t text_width = oled_text_width_px(text);
+    int16_t start_x = OLED_WIDTH;
+    int16_t target_x = 0;
+    if (text_width < OLED_WIDTH) {
+        target_x = (OLED_WIDTH - (int16_t)text_width) / 2;
+    }
+
+    for (int16_t x = start_x; x >= target_x; x -= 2) {
+        memset(s_buffer, 0, BUFFER_SIZE);
+        oled_draw_text_single_line(x, y, text);
+        oled_display();
+        if (hook) hook(ctx, x);
+        sleep_ms(frame_delay_ms);
+    }
+
+    // Ensure the message ends crisply at the final position
+    memset(s_buffer, 0, BUFFER_SIZE);
+    oled_draw_text_single_line(target_x, y, text);
+    oled_display();
+    if (hook) hook(ctx, target_x);
+}
+
+void oled_slide_in_text(const char *text, uint8_t y, uint8_t frame_delay_ms)
+{
+    oled_slide_in_text_hook(text, y, frame_delay_ms, NULL, NULL);
 }
 
 void oled_fill_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint8_t color)

@@ -10,6 +10,7 @@
 
 #include "imu.h"
 #include "oled.h"
+#include "font5x7.h"
 #include "steps_to_calories.h"
 #include "ws2812.pio.h"
 
@@ -102,6 +103,56 @@ static void update_led_bar(uint32_t steps, uint8_t battery_percent, uint32_t now
     }
 }
 
+typedef struct {
+    uint16_t frame_idx;
+    uint16_t frames_per_travel;
+    uint8_t last_pos;
+} led_bounce_state_t;
+
+static void startup_led_bounce_step(void *ctx, int16_t x_unused) {
+    (void)x_unused;
+    led_bounce_state_t *state = (led_bounce_state_t *)ctx;
+    if (state->frames_per_travel == 0) state->frames_per_travel = 1;
+
+    if (NUM_LEDS == 0) return;
+    uint8_t end = NUM_LEDS - 1;
+    uint16_t travel = state->frame_idx / state->frames_per_travel;
+    uint16_t within = state->frame_idx % state->frames_per_travel;
+
+    bool forward = (travel & 0x1) == 0;
+
+    float t = 0.0f;
+    if (state->frames_per_travel > 1) {
+        t = (float)within / (float)(state->frames_per_travel - 1);
+    }
+
+    // Position along strip with a smooth cross-fade between LEDs
+    float posf = t * (float)end;
+    if (!forward) posf = (float)end - posf;
+
+    uint8_t base = (uint8_t)posf;
+    if (base > end) base = end;
+    float frac = posf - (float)base; // 0..1 between base and next
+
+    uint8_t head_level = (uint8_t)(80.0f + frac * 20.0f + 0.5f);    // 80 -> 100
+    uint8_t next_level = (uint8_t)(frac * 20.0f + 0.5f);            // 0 -> 20
+    uint8_t neighbor = forward ? (uint8_t)(base + 1) : (base == 0 ? 0 : (uint8_t)(base - 1));
+    if (neighbor > end) neighbor = end;
+
+    for (uint8_t i = 0; i < NUM_LEDS; i++) {
+        uint8_t level = 0;
+        if (i == base) {
+            level = head_level;
+        } else if (i == neighbor && neighbor != base) {
+            level = next_level;
+        }
+        put_pixel(rgb_to_grb(level, level, 0)); // warm yellow bounce with smooth cross-fade
+    }
+
+    state->last_pos = base;
+    state->frame_idx++;
+}
+
 static void buttons_init(void) {
     gpio_init(BUTTON_MODE_PIN);
     gpio_set_dir(BUTTON_MODE_PIN, GPIO_IN);
@@ -113,15 +164,18 @@ static void buttons_init(void) {
 }
 
 static void render_oled(uint32_t steps, uint32_t calories, uint8_t battery_percent,
-                        bool show_calories, bool paused, uint32_t now_ms) {
+                        bool show_calories, bool paused, uint32_t now_ms,
+                        uint32_t flash_until_ms) {
     oled_home();
 
+    bool flash = now_ms < flash_until_ms;
+
     if (show_calories) {
-        oled_print(4, 2, "CAL");
+        oled_print(6, 4, "CAL");
         oled_show_battery_animated(battery_percent, now_ms);
         oled_show_calories(calories);
     } else {
-        oled_print(4, 2, "STEPS");
+        oled_print(6, 4, "STEPS");
         oled_show_battery_animated(battery_percent, now_ms);
         oled_show_steps(steps);
     }
@@ -129,6 +183,11 @@ static void render_oled(uint32_t steps, uint32_t calories, uint8_t battery_perce
     if (paused) {
         // Show "PAUSED" near the bottom of the 32px display
         oled_print(32, 24, "PAUSED");
+    }
+
+    if (flash) {
+        // 1px border flash to indicate a new step
+        oled_draw_rect(0, 0, OLED_WIDTH, OLED_HEIGHT, 1);
     }
 
     oled_display();
@@ -179,6 +238,29 @@ int main(void) {
     uint32_t last_start_toggle_ms = 0; // unused while auto-run is enabled
     uint32_t workout_steps = 0;
     uint32_t workout_offset = 0;       // start counting from boot
+    uint32_t step_flash_until_ms = 0;  // border flash timer on step increment
+
+    if (oled_ok) {
+        const char *title = "Pico Activity Tracker";
+        size_t title_len = strlen(title);
+        uint16_t title_px = (uint16_t)(title_len * (FONT_WIDTH + 1));
+        if (title_px > 0) title_px -= 1;
+        int16_t target_x = (title_px < OLED_WIDTH) ? (int16_t)((OLED_WIDTH - title_px) / 2) : 0;
+        uint16_t slide_frames = (uint16_t)(((OLED_WIDTH - target_x) / 2) + 1); // matches oled_slide_in_text step of 2px
+        if (slide_frames < 2) slide_frames = 2;
+        uint16_t travel_frames = slide_frames / 2; // two end-to-end travels during the slide
+        if (travel_frames == 0) travel_frames = 1;
+
+        uint8_t title_y = (OLED_HEIGHT - 8) / 2; // center the 8px font vertically
+        led_bounce_state_t bounce = {.last_pos = 0, .frame_idx = 0, .frames_per_travel = travel_frames};
+        oled_slide_in_text_hook(title, title_y, 12,
+                                startup_led_bounce_step, &bounce);
+        // Clear LEDs before handing control to the normal update loop
+        for (uint8_t i = 0; i < NUM_LEDS; i++) {
+            put_pixel(rgb_to_grb(0, 0, 0));
+        }
+        sleep_ms(400); // let the title sit briefly before normal UI resumes
+    }
 
     while (true) {
         uint32_t now_ms = to_ms_since_boot(get_absolute_time());
@@ -230,6 +312,7 @@ int main(void) {
         if (workout_steps != prev_steps) {
             printf("STEP %lu @ %lums\n", workout_steps, now_ms);
             prev_steps = workout_steps;
+            step_flash_until_ms = now_ms + 180; // brief border flash
         }
 
         if ((now_ms - last_diag_ms) >= DIAG_INTERVAL_MS) {
@@ -255,7 +338,8 @@ int main(void) {
         if ((now_ms - last_display_ms) >= DISPLAY_REFRESH_MS) {
             last_display_ms = now_ms;
             bool paused = false; // always running in auto mode
-            render_oled(workout_steps, calories, battery_percent, show_calories, paused, now_ms);
+            render_oled(workout_steps, calories, battery_percent, show_calories, paused, now_ms,
+                        step_flash_until_ms);
             printf("steps=%lu cal=%lu soc=%.1f%% %s\n",
                    workout_steps, calories, soc, paused ? "[PAUSED]" : "");
         }
