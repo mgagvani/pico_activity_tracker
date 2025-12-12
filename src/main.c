@@ -24,6 +24,7 @@
 #define IS_RGBW         false
 #define LED_FREQ_HZ     800000
 #define STEPS_PER_LED   25
+#define BREATH_PERIOD_MS 3000
 
 // Button GPIOs on Proton board
 #define BUTTON_MODE_PIN  26  // Toggle display between steps and calories
@@ -72,14 +73,19 @@ static void battery_color(uint8_t percent, uint8_t *r, uint8_t *g, uint8_t *b) {
     *b = 0;
 }
 
-static void update_led_bar(uint32_t steps, uint8_t battery_percent) {
+static void update_led_bar(uint32_t steps, uint8_t battery_percent, uint32_t now_ms) {
     uint8_t r = 0, g = 0, b = 0;
     battery_color(battery_percent, &r, &g, &b);
+
+    // Breathing blue for unlit/partial LEDs
+    float phase = (float)(now_ms % BREATH_PERIOD_MS) / (float)BREATH_PERIOD_MS; // 0-1
+    float breath = (sinf(phase * 2.0f * (float)M_PI) + 1.0f) * 0.5f;             // 0-1
+    uint8_t breath_level = (uint8_t)(breath * 80.0f); // cap breathing brightness
 
     for (uint8_t i = 0; i < NUM_LEDS; i++) {
         int32_t steps_into_segment = (int32_t)steps - (int32_t)(i * STEPS_PER_LED);
         if (steps_into_segment <= 0) {
-            put_pixel(rgb_to_grb(0, 0, 0));
+            put_pixel(rgb_to_grb(0, 0, breath_level));
             continue;
         }
         if (steps_into_segment > STEPS_PER_LED) steps_into_segment = STEPS_PER_LED;
@@ -87,6 +93,11 @@ static void update_led_bar(uint32_t steps, uint8_t battery_percent) {
         uint8_t sr = (uint8_t)((r * scale) / 255);
         uint8_t sg = (uint8_t)((g * scale) / 255);
         uint8_t sb = (uint8_t)((b * scale) / 255);
+        if (scale < 255) {
+            // Add breathing blue when not fully lit
+            uint16_t boosted_b = sb + breath_level;
+            sb = (boosted_b > 255) ? 255 : (uint8_t)boosted_b;
+        }
         put_pixel(rgb_to_grb(sr, sg, sb));
     }
 }
@@ -102,16 +113,16 @@ static void buttons_init(void) {
 }
 
 static void render_oled(uint32_t steps, uint32_t calories, uint8_t battery_percent,
-                        bool show_calories, bool paused) {
+                        bool show_calories, bool paused, uint32_t now_ms) {
     oled_home();
 
     if (show_calories) {
         oled_print(4, 2, "CAL");
-        oled_show_battery(battery_percent);
+        oled_show_battery_animated(battery_percent, now_ms);
         oled_show_calories(calories);
     } else {
         oled_print(4, 2, "STEPS");
-        oled_show_battery(battery_percent);
+        oled_show_battery_animated(battery_percent, now_ms);
         oled_show_steps(steps);
     }
 
@@ -239,12 +250,12 @@ int main(void) {
             }
         }
 
-        update_led_bar(workout_steps, battery_percent);
+        update_led_bar(workout_steps, battery_percent, now_ms);
 
         if ((now_ms - last_display_ms) >= DISPLAY_REFRESH_MS) {
             last_display_ms = now_ms;
             bool paused = false; // always running in auto mode
-            render_oled(workout_steps, calories, battery_percent, show_calories, paused);
+            render_oled(workout_steps, calories, battery_percent, show_calories, paused, now_ms);
             printf("steps=%lu cal=%lu soc=%.1f%% %s\n",
                    workout_steps, calories, soc, paused ? "[PAUSED]" : "");
         }

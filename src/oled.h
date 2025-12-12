@@ -63,6 +63,8 @@ void oled_set_contrast(uint8_t contrast);
 // x, y: top-left corner position
 // percent: battery level 0-100
 void oled_draw_battery(int16_t x, int16_t y, uint8_t percent);
+// Animated battery icon: base fill + breathing blink on next/last bar
+void oled_draw_battery_animated(int16_t x, int16_t y, uint8_t percent, uint32_t now_ms);
 
 // Write text at 2x scale for large numbers
 void oled_print_2x(uint8_t x, uint8_t y, const char *str);
@@ -88,6 +90,7 @@ void oled_printf(const char *fmt, ...);
 // Show battery icon in top-right corner (default position)
 // Just pass the percentage, no coordinates needed
 void oled_show_battery(uint8_t percent);
+void oled_show_battery_animated(uint8_t percent, uint32_t now_ms);
 
 // Show step count centered on display (large 2x text)
 // Automatically centers the number horizontally
@@ -105,4 +108,3 @@ void oled_home(void);
 void oled_goto_line(uint8_t line);
 
 #endif // OLED_H
-

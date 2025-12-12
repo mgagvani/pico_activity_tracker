@@ -239,6 +239,40 @@ void oled_draw_battery(int16_t x, int16_t y, uint8_t percent)
     }
 }
 
+void oled_draw_battery_animated(int16_t x, int16_t y, uint8_t percent, uint32_t now_ms)
+{
+    // Battery body outline (20x12)
+    oled_draw_rect(x, y, 20, 12, 1);
+    
+    // Battery terminal nub on right (4x6, centered vertically)
+    oled_fill_rect(x + 20, y + 3, 3, 6, 1);
+    
+    // Determine fill level (4 segments, each 4px wide with 1px gaps)
+    uint8_t base_bars = 0;
+    if (percent >= 87) base_bars = 4;
+    else if (percent >= 62) base_bars = 3;
+    else if (percent >= 37) base_bars = 2;
+    else if (percent >= 12) base_bars = 1;
+
+    // Simple breathe: blink one extra bar if not full; at full, blink the last bar
+    bool blink_on = ((now_ms / 600) & 0x1) == 0;
+    uint8_t bars = base_bars;
+    if (base_bars == 0) {
+        bars = blink_on ? 1 : 0;
+    } else if (base_bars < 4) {
+        bars = base_bars + (blink_on ? 1 : 0);
+        if (bars > 4) bars = 4;
+    } else { // full
+        bars = blink_on ? 4 : 3;
+    }
+    
+    // Draw fill segments (each 4x8, starting 2px from left edge)
+    for (uint8_t i = 0; i < bars; i++) {
+        int16_t bar_x = x + 2 + (i * 4) + i;  // 4px wide + 1px gap
+        oled_fill_rect(bar_x, y + 2, 4, 8, 1);
+    }
+}
+
 // Write a single character at 2x scale
 static void oled_write_char_2x(uint8_t x, uint8_t y, char c)
 {
@@ -301,6 +335,11 @@ void oled_show_battery(uint8_t percent)
     oled_draw_battery(100, 2, percent);
 }
 
+void oled_show_battery_animated(uint8_t percent, uint32_t now_ms)
+{
+    oled_draw_battery_animated(100, 2, percent, now_ms);
+}
+
 void oled_show_steps(uint32_t steps)
 {
     // Format step count
@@ -346,4 +385,3 @@ void oled_goto_line(uint8_t line)
         s_cursor_y = 0;
     }
 }
-
